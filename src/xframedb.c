@@ -20,6 +20,7 @@
 #include <signal.h>
 #include <sys/timerfd.h>
 #include <sys/signalfd.h>
+#include <pthread.h>
 
 #define handle_error_en( en, msg ) \
   do { errno = en; perror ( msg ) ; exit ( EXIT_FAILURE ); } while ( 0 )
@@ -36,12 +37,15 @@
 // queues, you might get a bunch at once.
 #define MAX_EVENTS 32
 
-// Global variables
+// Global variables accessed by all threads (no mutex required)
 static int listenfd;
 static int epollfd;
 static int timerfd;
 static int sigfd;
 static struct epoll_event event, *events;
+
+// GLobal variables modified by threads (mutex required)
+static pthread_mutex_t timercount_mutex;
 static long long unsigned int timercount = 0;
 
 static int
@@ -316,10 +320,12 @@ mainloop ( )
             break;
           }
 
+          pthread_mutex_lock(&timercount_mutex);
           timercount += expire_count;
 
           /* Write the expiry count to standard output */
           printf ( "Timer: %llu\n",timercount );
+          pthread_mutex_unlock(&timercount_mutex);
         }
 
         continue; // next event please
@@ -369,6 +375,9 @@ main ( int argc, char *argv[] )
     handle_error ( "Could not create an epoll.\n");
 
   events = malloc ( MAX_EVENTS * sizeof ( struct epoll_event ) );
+
+  /* Setup some mutexes for threads */
+  pthread_mutex_init(&timercount_mutex,NULL);
 
   // Mock up the event structure with our socket and
   // mark it for read ( EPOLLIN ) and edge triggered ( EPOLLET )
