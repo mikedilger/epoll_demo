@@ -43,8 +43,14 @@ static int epollfd;
 static int timerfd;
 static int sigfd;
 static struct epoll_event event, *events;
+typedef struct {
+  pthread_t thread;
+  int thread_number;
+} threadinfo_t;
+static threadinfo_t *threads;
+static int numthreads;
 
-// GLobal variables modified by threads (mutex required)
+// Global variables modified by threads (mutex required)
 static pthread_mutex_t timercount_mutex;
 static long long unsigned int timercount = 0;
 
@@ -162,6 +168,20 @@ accept_new_client ( int sfd )
 }
 
 static int
+my_thread_number ( )
+{
+  unsigned long int t;
+  t = pthread_self();
+  int i;
+  /* Dumb algorithm, searches them all */
+  for ( i = 0 ; i < numthreads ; i++ ) {
+    if ( threads[i].thread == t )
+      return threads[i].thread_number;
+  }
+  return -1;
+}
+
+static int
 do_work ( int fd )
 {
   /* We have data on the fd waiting to be read. Read and
@@ -203,7 +223,7 @@ do_work ( int fd )
 
   if ( done )
   {
-    printf ( "Closed connection on descriptor %d\n",fd );
+    printf ( "thread %d: Closed connection on descriptor %d\n",my_thread_number(), fd );
 
     /* Closing the descriptor will make epoll remove it
        from the set of descriptors which are monitored. */
@@ -272,26 +292,46 @@ mainloop ( )
         ssize_t sz;
         struct signalfd_siginfo fdsi;
 
-        sz = read(sigfd, &fdsi, sizeof(struct signalfd_siginfo));
-        if (sz != sizeof(struct signalfd_siginfo))
-          handle_error ( "read signal of wrong size" );
+        while ( 1 )
+        {
+          sz = read(sigfd, &fdsi, sizeof(struct signalfd_siginfo));
+          if ( sz == EAGAIN || sz == EWOULDBLOCK )
+          {
+            break; // All signals have been handled.
+          }
 
-        switch (fdsi.ssi_signo) {
-          case SIGHUP:
-            fprintf ( stderr, "\nCaught SIGHUP.  Exiting.\n" );
-            break;
-          case SIGINT:
-            fprintf ( stderr, "\nCaught SIGINT.  Exiting.\n" );
-            break;
-          case SIGQUIT:
-            fprintf ( stderr, "\nCaught SIGQUIT.  Exiting.\n" );
-            break;
+          if (sz != sizeof(struct signalfd_siginfo))
+            handle_error ( "read signal of wrong size" );
+
+          int exiting = 0;
+          const char* signame;
+          switch (fdsi.ssi_signo) {
+            case SIGHUP:  exiting=1; signame="SIGHUP"; break;
+            case SIGINT:  exiting=1; signame="SIGINT"; break;
+            case SIGQUIT: exiting=1; signame="SIGQUIT"; break;
+          }
+
+          if (exiting) {
+
+            printf ( "\nthread %d: Caught %s, exiting.\n",
+              my_thread_number(), signame );
+
+            /* Cancel all the other threads */
+            for ( i = 0 ; i < numthreads ; ++i )
+            {
+              if ( threads[i].thread == pthread_self() ) continue;
+              pthread_cancel ( threads[i].thread );
+            }
+
+            /* Exit ourself */
+            pthread_exit ( EXIT_SUCCESS );
+          }
+
+          printf ( "\nthread %d: Caught signal %d, ignoring.\n" ,
+            my_thread_number(), fdsi.ssi_signo);
         }
 
-        close ( listenfd );
-        close ( epollfd );
-
-        exit ( EXIT_SUCCESS );
+        continue; // next event please
       }
 
       // If the event is on our timer socket
@@ -324,7 +364,8 @@ mainloop ( )
           timercount += expire_count;
 
           /* Write the expiry count to standard output */
-          printf ( "Timer: %llu\n",timercount );
+          printf ( "thread %d: Timer: %llu\n", my_thread_number(),
+            timercount );
           pthread_mutex_unlock(&timercount_mutex);
         }
 
@@ -349,11 +390,7 @@ threadCode ( void *argument )
   int tid;
 
   tid = *((int *) argument);
-
-  unsigned long int self;
-  self = pthread_self();
-
-  printf ( "Thread %d (%lu) has started.\n", tid, self);
+  printf ( "Thread %d has started.\n", tid);
 
   mainloop();
 
@@ -452,9 +489,40 @@ main ( int argc, char *argv[] )
   if ( s == -1 )
     handle_error ( "Could not add file descriptor to epoll.\n" );
 
-  /* The event loop */
-  mainloop ( );
+  /* create one thread per core */
+  int i, rc;
 
-  // The event loop above doesn't have a provision to actually exit.
-  return EXIT_FAILURE;
+  numthreads = sysconf ( _SC_NPROCESSORS_ONLN ); // # of cores
+
+  threads = malloc ( sizeof ( threadinfo_t ) * numthreads );
+
+  for ( i = 0 ; i < numthreads ; ++i )
+  {
+    threads[i].thread_number = i;
+    printf ( "Launching new thread %d\n", i );
+    s = pthread_create( &threads[i].thread, NULL, threadCode,
+      (void *) &threads[i].thread_number);
+    if ( s != 0 )
+      handle_error ( "Couldn't start thread.\n" );
+  }
+
+  /* wait for all threads to complete */
+  void *res;
+  for ( i = 0 ; i < numthreads ; ++i )
+  {
+    s = pthread_join ( threads[i].thread , &res );
+    if ( s != 0 )
+      handle_error ( "Couldn't join thread.\n" );
+
+    fprintf ( stderr , "Joined thread %d\n" ,
+      threads[i].thread_number );
+  }
+
+  free ( events );
+
+  close ( listenfd );
+  close ( timerfd );
+  close ( epollfd );
+
+  return EXIT_SUCCESS;
 }
