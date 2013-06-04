@@ -207,99 +207,12 @@ do_work ( int fd )
   }
 }
 
-int
-main ( int argc, char *argv[] )
+void
+mainloop ( )
 {
-  int s;
-
-  if ( argc != 2 )
-  {
-    fprintf ( stderr, "Usage: %s [port]\n", argv[0] );
-    exit ( EXIT_FAILURE );
-  }
-
-  // Setup a server socket
-  listenfd = create_and_bind ( argv[1] );
-  if ( listenfd == -1 )
-    handle_error ( "Could not create and bind listener socket.\n" );
-
-  // Make server socket non-blocking
-  s = make_socket_non_blocking ( listenfd );
-  if ( s == -1 )
-    handle_error ( "Could not make listener socket non-blocking.\n" );
-
-  // Mark server socket as a listener, with maximum backlog queue
-  s = listen ( listenfd, SOMAXCONN );
-  if ( s == -1 )
-    handle_error ( "Could not listen.\n" );
-
-  // Setup an epoll instance
-  epollfd = epoll_create1 ( 0 );
-  if ( epollfd == -1 )
-    handle_error ( "Could not create an epoll.\n");
-
-  events = malloc ( MAX_EVENTS * sizeof ( struct epoll_event ) );
-
-  // Mock up the event structure with our socket and
-  // mark it for read ( EPOLLIN ) and edge triggered ( EPOLLET )
-  event.data.fd = listenfd;
-  event.events = EPOLLIN | EPOLLET;
-  // And configure the epoll instance for those types of events
-  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, listenfd, &event );
-  if ( s == -1 )
-    handle_error ( "Could not add file descriptor to epoll.\n" );
-
-  // Create a timer that times out every 1 seconds.
-
-  struct itimerspec tspec;
-  tspec.it_value.tv_sec = 1;
-  tspec.it_value.tv_nsec = 0;
-  tspec.it_interval.tv_sec = 1;
-  tspec.it_interval.tv_nsec = 0;
-
-  timerfd = timerfd_create ( CLOCK_MONOTONIC, TFD_NONBLOCK );
-  s = timerfd_settime ( timerfd, 0, &tspec, NULL );
-
-  /* Start watching for events to read (EPOLLIN) on this timer
-     socket in edge triggered mode (EPOLLET) on the same
-     epoll instance we are already using */
-  event.data.fd = timerfd;
-  event.events = EPOLLIN | EPOLLET;
-  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, timerfd, &event );
-  if ( s == -1 )
-    handle_error ( "Could not add file descriptor to epoll.\n" );
-
-  // Adjust signal handling
-  sigset_t mask;
-
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGHUP);
-  sigaddset(&mask, SIGINT);
-  sigaddset(&mask, SIGQUIT);
-
-  /* Block signals so they aren't handled according to their
-     default dispositions */
-  if ( sigprocmask ( SIG_BLOCK, &mask, NULL ) == -1 )
-    handle_error ( "Could not mask signals.\n" );
-
-  /* Setup a signal fd, to watch signals with epoll */
-  sigfd = signalfd ( -1, &mask, 0 );
-  if ( sigfd == -1 )
-    handle_error ( "Could not create signalfd.\n" );
-
-  /* Start watching for events to read (EPOLLIN) on this signalfd
-     socket in edge triggered mode (EPOLLET) on the same
-     epoll instance we are already using */
-  event.data.fd = sigfd;
-  event.events = EPOLLIN | EPOLLET;
-  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, sigfd, &event );
-  if ( s == -1 )
-    handle_error ( "Could not add file descriptor to epoll.\n" );
-
-  /* The event loop */
   while ( 1 )
   {
-    int n, i;
+    int n, i, s;
 
     // Wait for an event. -1 = wait forever
     // ( 0 would mean return immediately, otherwise value is in ms )
@@ -422,6 +335,99 @@ main ( int argc, char *argv[] )
       }
     }
   }
+}
+
+int
+main ( int argc, char *argv[] )
+{
+  int s;
+
+  if ( argc != 2 )
+  {
+    fprintf ( stderr, "Usage: %s [port]\n", argv[0] );
+    exit ( EXIT_FAILURE );
+  }
+
+  // Setup a server socket
+  listenfd = create_and_bind ( argv[1] );
+  if ( listenfd == -1 )
+    handle_error ( "Could not create and bind listener socket.\n" );
+
+  // Make server socket non-blocking
+  s = make_socket_non_blocking ( listenfd );
+  if ( s == -1 )
+    handle_error ( "Could not make listener socket non-blocking.\n" );
+
+  // Mark server socket as a listener, with maximum backlog queue
+  s = listen ( listenfd, SOMAXCONN );
+  if ( s == -1 )
+    handle_error ( "Could not listen.\n" );
+
+  // Setup an epoll instance
+  epollfd = epoll_create1 ( 0 );
+  if ( epollfd == -1 )
+    handle_error ( "Could not create an epoll.\n");
+
+  events = malloc ( MAX_EVENTS * sizeof ( struct epoll_event ) );
+
+  // Mock up the event structure with our socket and
+  // mark it for read ( EPOLLIN ) and edge triggered ( EPOLLET )
+  event.data.fd = listenfd;
+  event.events = EPOLLIN | EPOLLET;
+  // And configure the epoll instance for those types of events
+  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, listenfd, &event );
+  if ( s == -1 )
+    handle_error ( "Could not add file descriptor to epoll.\n" );
+
+  // Create a timer that times out every 1 seconds.
+
+  struct itimerspec tspec;
+  tspec.it_value.tv_sec = 1;
+  tspec.it_value.tv_nsec = 0;
+  tspec.it_interval.tv_sec = 1;
+  tspec.it_interval.tv_nsec = 0;
+
+  timerfd = timerfd_create ( CLOCK_MONOTONIC, TFD_NONBLOCK );
+  s = timerfd_settime ( timerfd, 0, &tspec, NULL );
+
+  /* Start watching for events to read (EPOLLIN) on this timer
+     socket in edge triggered mode (EPOLLET) on the same
+     epoll instance we are already using */
+  event.data.fd = timerfd;
+  event.events = EPOLLIN | EPOLLET;
+  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, timerfd, &event );
+  if ( s == -1 )
+    handle_error ( "Could not add file descriptor to epoll.\n" );
+
+  // Adjust signal handling
+  sigset_t mask;
+
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGHUP);
+  sigaddset(&mask, SIGINT);
+  sigaddset(&mask, SIGQUIT);
+
+  /* Block signals so they aren't handled according to their
+     default dispositions */
+  if ( sigprocmask ( SIG_BLOCK, &mask, NULL ) == -1 )
+    handle_error ( "Could not mask signals.\n" );
+
+  /* Setup a signal fd, to watch signals with epoll */
+  sigfd = signalfd ( -1, &mask, 0 );
+  if ( sigfd == -1 )
+    handle_error ( "Could not create signalfd.\n" );
+
+  /* Start watching for events to read (EPOLLIN) on this signalfd
+     socket in edge triggered mode (EPOLLET) on the same
+     epoll instance we are already using */
+  event.data.fd = sigfd;
+  event.events = EPOLLIN | EPOLLET;
+  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, sigfd, &event );
+  if ( s == -1 )
+    handle_error ( "Could not add file descriptor to epoll.\n" );
+
+  /* The event loop */
+  mainloop ( );
 
   // The event loop above doesn't have a provision to actually exit.
   return EXIT_FAILURE;
