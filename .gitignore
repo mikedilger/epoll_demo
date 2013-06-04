@@ -20,4 +20,6 @@ src/Makefile
 src/Makefile.in
 stamp-h1
 *.o
+src/server
+src/xframedb
 .deps/
