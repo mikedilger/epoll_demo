@@ -343,6 +343,23 @@ mainloop ( )
   }
 }
 
+void *
+threadCode ( void *argument )
+{
+  int tid;
+
+  tid = *((int *) argument);
+
+  unsigned long int self;
+  self = pthread_self();
+
+  printf ( "Thread %d (%lu) has started.\n", tid, self);
+
+  mainloop();
+
+  return NULL;
+}
+
 int
 main ( int argc, char *argv[] )
 {
