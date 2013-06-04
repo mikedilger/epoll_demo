@@ -17,7 +17,9 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/timerfd.h>
+#include <sys/signalfd.h>
 
 #define handle_error_en( en, msg ) \
   do { errno = en; perror ( msg ) ; exit ( EXIT_FAILURE ); } while ( 0 )
@@ -262,6 +264,36 @@ main ( int argc, char *argv[] )
   if ( s == -1 )
     handle_error ( "Could not add file descriptor to epoll.\n" );
 
+  // Adjust signal handling
+  sigset_t mask;
+
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGHUP);
+  sigaddset(&mask, SIGINT);
+  sigaddset(&mask, SIGQUIT);
+
+  /* Block signals so they aren't handled according to their
+     default dispositions */
+  if ( sigprocmask ( SIG_BLOCK, &mask, NULL ) == -1 )
+    handle_error ( "Could not mask signals.\n" );
+
+  /* Setup a signal fd, to watch signals with epoll */
+  int sigfd;
+  struct signalfd_siginfo fdsi;
+
+  sigfd = signalfd ( -1, &mask, 0 );
+  if ( sigfd == -1 )
+    handle_error ( "Could not create signalfd.\n" );
+
+  /* Start watching for events to read (EPOLLIN) on this signalfd
+     socket in edge triggered mode (EPOLLET) on the same
+     epoll instance we are already using */
+  event.data.fd = sigfd;
+  event.events = EPOLLIN | EPOLLET;
+  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, sigfd, &event );
+  if ( s == -1 )
+    handle_error ( "Could not add file descriptor to epoll.\n" );
+
   /* The event loop */
   while ( 1 )
   {
@@ -313,6 +345,32 @@ main ( int argc, char *argv[] )
             handle_error ( "Could not add file descriptor to epoll.\n" );
         }
         continue; // next event please
+      }
+
+      // If the event is on our signal socket
+      else if ( sigfd == events[i].data.fd )
+      {
+        ssize_t sz;
+        sz = read(sigfd, &fdsi, sizeof(struct signalfd_siginfo));
+        if (sz != sizeof(struct signalfd_siginfo))
+          handle_error ( "read signal of wrong size" );
+
+        switch (fdsi.ssi_signo) {
+          case SIGHUP:
+            fprintf ( stderr, "\nCaught SIGHUP.  Exiting.\n" );
+            break;
+          case SIGINT:
+            fprintf ( stderr, "\nCaught SIGINT.  Exiting.\n" );
+            break;
+          case SIGQUIT:
+            fprintf ( stderr, "\nCaught SIGQUIT.  Exiting.\n" );
+            break;
+        }
+
+        close ( listenfd );
+        close ( epollfd );
+
+        exit ( EXIT_SUCCESS );
       }
 
       // If the event is on our timer socket
