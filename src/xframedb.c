@@ -36,6 +36,14 @@
 // queues, you might get a bunch at once.
 #define MAX_EVENTS 32
 
+// Global variables
+static int listenfd;
+static int epollfd;
+static int timerfd;
+static int sigfd;
+static struct epoll_event event, *events;
+static long long unsigned int timercount = 0;
+
 static int
 create_and_bind ( char *port )
 {
@@ -202,9 +210,7 @@ do_work ( int fd )
 int
 main ( int argc, char *argv[] )
 {
-  int listenfd, s;
-  int epollfd;
-  struct epoll_event event, events[MAX_EVENTS];
+  int s;
 
   if ( argc != 2 )
   {
@@ -232,6 +238,8 @@ main ( int argc, char *argv[] )
   if ( epollfd == -1 )
     handle_error ( "Could not create an epoll.\n");
 
+  events = malloc ( MAX_EVENTS * sizeof ( struct epoll_event ) );
+
   // Mock up the event structure with our socket and
   // mark it for read ( EPOLLIN ) and edge triggered ( EPOLLET )
   event.data.fd = listenfd;
@@ -249,11 +257,8 @@ main ( int argc, char *argv[] )
   tspec.it_interval.tv_sec = 1;
   tspec.it_interval.tv_nsec = 0;
 
-  int timerfd;
   timerfd = timerfd_create ( CLOCK_MONOTONIC, TFD_NONBLOCK );
   s = timerfd_settime ( timerfd, 0, &tspec, NULL );
-
-  long long unsigned int timercount = 0;
 
   /* Start watching for events to read (EPOLLIN) on this timer
      socket in edge triggered mode (EPOLLET) on the same
@@ -278,9 +283,6 @@ main ( int argc, char *argv[] )
     handle_error ( "Could not mask signals.\n" );
 
   /* Setup a signal fd, to watch signals with epoll */
-  int sigfd;
-  struct signalfd_siginfo fdsi;
-
   sigfd = signalfd ( -1, &mask, 0 );
   if ( sigfd == -1 )
     handle_error ( "Could not create signalfd.\n" );
@@ -351,6 +353,8 @@ main ( int argc, char *argv[] )
       else if ( sigfd == events[i].data.fd )
       {
         ssize_t sz;
+        struct signalfd_siginfo fdsi;
+
         sz = read(sigfd, &fdsi, sizeof(struct signalfd_siginfo));
         if (sz != sizeof(struct signalfd_siginfo))
           handle_error ( "read signal of wrong size" );
