@@ -22,6 +22,8 @@
 #include <sys/signalfd.h>
 #include <pthread.h>
 
+#include "options.h"
+
 #define handle_error_en( en, msg ) \
   do { errno = en; perror ( msg ) ; exit ( EXIT_FAILURE ); } while ( 0 )
 #define handle_error( msg ) \
@@ -38,17 +40,19 @@
 #define MAX_EVENTS 32
 
 // Global variables accessed by all threads (no mutex required)
+Options options;
+
 static int listenfd;
 static int epollfd;
 static int timerfd;
 static int sigfd;
 static struct epoll_event event, *events;
+
 typedef struct {
   pthread_t thread;
   int thread_number;
 } threadinfo_t;
 static threadinfo_t *threads;
-static int numthreads;
 
 // Global variables modified by threads (mutex required)
 static pthread_mutex_t timercount_mutex;
@@ -174,7 +178,7 @@ my_thread_number ( )
   t = pthread_self();
   int i;
   /* Dumb algorithm, searches them all */
-  for ( i = 0 ; i < numthreads ; i++ ) {
+  for ( i = 0 ; i < options.threads ; i++ ) {
     if ( threads[i].thread == t )
       return threads[i].thread_number;
   }
@@ -317,7 +321,7 @@ mainloop ( )
               my_thread_number(), signame );
 
             /* Cancel all the other threads */
-            for ( i = 0 ; i < numthreads ; ++i )
+            for ( i = 0 ; i < options.threads ; ++i )
             {
               if ( threads[i].thread == pthread_self() ) continue;
               pthread_cancel ( threads[i].thread );
@@ -397,19 +401,51 @@ threadCode ( void *argument )
   return NULL;
 }
 
+void
+usage()
+{
+  fprintf ( stderr,
+"Usage: xframedb [ -p <port> ] [ -s <server_backlog> ] [ -t <threads> ]\n"
+  );
+  exit ( EXIT_FAILURE );
+}
+
 int
 main ( int argc, char *argv[] )
 {
-  int s;
+  /* Set default options */
+  options.port = "1555";
+  options.socket_backlog = SOMAXCONN;
+  options.threads = sysconf ( _SC_NPROCESSORS_ONLN ); // # of cores
 
-  if ( argc != 2 )
+  /* Read command line options */
+  extern char *optarg;
+  int opt;
+  while ( ( opt = getopt ( argc, argv, "p:s:t:" ) ) != -1 )
   {
-    fprintf ( stderr, "Usage: %s [port]\n", argv[0] );
-    exit ( EXIT_FAILURE );
+    switch ( opt ) {
+      case 'p':
+        options.port = strdup(optarg);
+        break;
+      case 's':
+        options.socket_backlog = atoi(optarg);
+        break;
+      case 't':
+        options.threads = atoi(optarg);
+        break;
+      default:
+        usage();
+    }
   }
 
+  if ( optind < argc ) {
+    usage();
+  }
+
+  int s;
+
   // Setup a server socket
-  listenfd = create_and_bind ( argv[1] );
+  listenfd = create_and_bind ( options.port );
   if ( listenfd == -1 )
     handle_error ( "Could not create and bind listener socket.\n" );
 
@@ -419,7 +455,7 @@ main ( int argc, char *argv[] )
     handle_error ( "Could not make listener socket non-blocking.\n" );
 
   // Mark server socket as a listener, with maximum backlog queue
-  s = listen ( listenfd, SOMAXCONN );
+  s = listen ( listenfd, options.socket_backlog );
   if ( s == -1 )
     handle_error ( "Could not listen.\n" );
 
@@ -492,11 +528,9 @@ main ( int argc, char *argv[] )
   /* create one thread per core */
   int i, rc;
 
-  numthreads = sysconf ( _SC_NPROCESSORS_ONLN ); // # of cores
+  threads = malloc ( sizeof ( threadinfo_t ) * options.threads );
 
-  threads = malloc ( sizeof ( threadinfo_t ) * numthreads );
-
-  for ( i = 0 ; i < numthreads ; ++i )
+  for ( i = 0 ; i < options.threads ; ++i )
   {
     threads[i].thread_number = i;
     printf ( "Launching new thread %d\n", i );
@@ -508,7 +542,7 @@ main ( int argc, char *argv[] )
 
   /* wait for all threads to complete */
   void *res;
-  for ( i = 0 ; i < numthreads ; ++i )
+  for ( i = 0 ; i < options.threads ; ++i )
   {
     s = pthread_join ( threads[i].thread , &res );
     if ( s != 0 )
