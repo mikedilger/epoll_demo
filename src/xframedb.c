@@ -1,4 +1,8 @@
 /**
+ * THIS SOFTWARE AND DATA ARE COPYRIGHTED
+ * Copyright © Optimal Computing Limited New Zealand, 2012.
+ * Please see the file LICENSE for terms and conditions and restrictions.
+ *
  * This is a generic linux network server, destined to be a graph database
  * server xframedb
  */
@@ -13,6 +17,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <errno.h>
+#include <sys/timerfd.h>
 
 #define handle_error_en( en, msg ) \
   do { errno = en; perror ( msg ) ; exit ( EXIT_FAILURE ); } while ( 0 )
@@ -234,6 +239,29 @@ main ( int argc, char *argv[] )
   if ( s == -1 )
     handle_error ( "Could not add file descriptor to epoll.\n" );
 
+  // Create a timer that times out every 1 seconds.
+
+  struct itimerspec tspec;
+  tspec.it_value.tv_sec = 1;
+  tspec.it_value.tv_nsec = 0;
+  tspec.it_interval.tv_sec = 1;
+  tspec.it_interval.tv_nsec = 0;
+
+  int timerfd;
+  timerfd = timerfd_create ( CLOCK_MONOTONIC, TFD_NONBLOCK );
+  s = timerfd_settime ( timerfd, 0, &tspec, NULL );
+
+  long long unsigned int timercount = 0;
+
+  /* Start watching for events to read (EPOLLIN) on this timer
+     socket in edge triggered mode (EPOLLET) on the same
+     epoll instance we are already using */
+  event.data.fd = timerfd;
+  event.events = EPOLLIN | EPOLLET;
+  s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, timerfd, &event );
+  if ( s == -1 )
+    handle_error ( "Could not add file descriptor to epoll.\n" );
+
   /* The event loop */
   while ( 1 )
   {
@@ -284,6 +312,41 @@ main ( int argc, char *argv[] )
           if ( s == -1 )
             handle_error ( "Could not add file descriptor to epoll.\n" );
         }
+        continue; // next event please
+      }
+
+      // If the event is on our timer socket
+      else if ( timerfd == events[i].data.fd )
+      {
+        // Read 8-byte integer count of expirations
+        while ( 1 )
+        {
+          ssize_t readcount;
+          long long unsigned int expire_count;
+
+          readcount = read ( timerfd, (void*)&expire_count, sizeof ( long long unsigned int ) );
+          if ( readcount == -1 )
+          {
+            /* If errno == EAGAIN, that means we have read all
+               data. So go back to the main loop. */
+            if ( errno != EAGAIN )
+            {
+              perror ( "read" );
+            }
+            break;
+          }
+          else if ( readcount == 0 )
+          {
+            /* End of file. The remote has closed the connection. */
+            break;
+          }
+
+          timercount += expire_count;
+
+          /* Write the expiry count to standard output */
+          printf ( "Timer: %llu\n",timercount );
+        }
+
         continue; // next event please
       }
 
