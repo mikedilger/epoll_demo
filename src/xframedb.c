@@ -232,7 +232,9 @@ do_work ( int fd )
     /* Closing the descriptor will make epoll remove it
        from the set of descriptors which are monitored. */
     close ( fd );
+    return 1;
   }
+  return 0;
 }
 
 void
@@ -282,11 +284,17 @@ mainloop ( )
              socket in edge triggered mode ( EPOLLET ) on the same
              epoll instance we are already using */
           event.data.fd = infd;
-          event.events = EPOLLIN | EPOLLET;
+          event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
           s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, infd, &event );
           if ( s == -1 )
             handle_error ( "Could not add file descriptor to epoll.\n" );
         }
+
+        // Re-arm the listening socket
+        s = epoll_ctl( epollfd, EPOLL_CTL_MOD, events[i].data.fd, &events[i] );
+        if ( s == -1 )
+          handle_error ( "Could not re-arm epoll for the listening socket.\n" );
+
         continue; // next event please
       }
 
@@ -335,6 +343,11 @@ mainloop ( )
             my_thread_number(), fdsi.ssi_signo);
         }
 
+        // Re-arm the signal socket
+        s = epoll_ctl( epollfd, EPOLL_CTL_MOD, events[i].data.fd, &events[i] );
+        if ( s == -1 )
+          handle_error ( "Could not re-arm epoll for the signal socket.\n" );
+
         continue; // next event please
       }
 
@@ -373,6 +386,11 @@ mainloop ( )
           pthread_mutex_unlock(&timercount_mutex);
         }
 
+        // Re-arm the signal socket
+        s = epoll_ctl( epollfd, EPOLL_CTL_MOD, events[i].data.fd, &events[i] );
+        if ( s == -1 )
+          handle_error ( "Could not re-arm epoll for the timer socket.\n" );
+
         continue; // next event please
       }
 
@@ -382,7 +400,14 @@ mainloop ( )
            We must read whatever data is available completely,
            as we are running in edge-triggered mode and we won't
            get a notification again for the same data. */
-        do_work ( events[i].data.fd );
+        int closed = do_work ( events[i].data.fd );
+
+        if (!closed) {
+          // Re-arm the socket
+          s = epoll_ctl( epollfd, EPOLL_CTL_MOD, events[i].data.fd, &events[i] );
+          if ( s == -1 )
+            handle_error ( "Could not re-arm epoll for a socket.\n" );
+        }
       }
     }
   }
@@ -472,7 +497,7 @@ main ( int argc, char *argv[] )
   // Mock up the event structure with our socket and
   // mark it for read ( EPOLLIN ) and edge triggered ( EPOLLET )
   event.data.fd = listenfd;
-  event.events = EPOLLIN | EPOLLET;
+  event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
   // And configure the epoll instance for those types of events
   s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, listenfd, &event );
   if ( s == -1 )
@@ -493,18 +518,14 @@ main ( int argc, char *argv[] )
      socket in edge triggered mode (EPOLLET) on the same
      epoll instance we are already using */
   event.data.fd = timerfd;
-  event.events = EPOLLIN | EPOLLET;
+  event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
   s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, timerfd, &event );
   if ( s == -1 )
     handle_error ( "Could not add file descriptor to epoll.\n" );
 
   // Adjust signal handling
   sigset_t mask;
-
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGHUP);
-  sigaddset(&mask, SIGINT);
-  sigaddset(&mask, SIGQUIT);
+  sigfillset(&mask);
 
   /* Block signals so they aren't handled according to their
      default dispositions */
@@ -520,7 +541,7 @@ main ( int argc, char *argv[] )
      socket in edge triggered mode (EPOLLET) on the same
      epoll instance we are already using */
   event.data.fd = sigfd;
-  event.events = EPOLLIN | EPOLLET;
+  event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
   s = epoll_ctl ( epollfd, EPOLL_CTL_ADD, sigfd, &event );
   if ( s == -1 )
     handle_error ( "Could not add file descriptor to epoll.\n" );
