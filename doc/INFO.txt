@@ -1,0 +1,121 @@
+
+EPOLL_CTL_DISABLE
+-----------------
+
+LWN article:  EPOLL_CTL_DISABLE (before it was fully implemented)
+  https://lwn.net/Articles/520012/
+
+  Paton J. Lewis
+
+  LWN pointer to patch w/ test:
+    https://lwn.net/Articles/520019/
+
+  https://lwn.net/Articles/520022/
+
+  First thread:
+    http://thread.gmane.org/gmane.linux.kernel/1311457
+
+  Another thread that ended with good, but unanswered questions:
+    http://thread.gmane.org/gmane.linux.kernel/1348811
+    (the follow on reply on this thread is of interest)
+
+  Follow up to that:
+    http://thread.gmane.org/gmane.linux.file-systems/68114
+    RCU: read-copy-update:
+
+  https://lwn.net/Articles/520358/
+
+  THIS EFFORT WAS ABORTED.
+    Even with EPOLLONESHOT, there are race conditions with respect to
+    close(2) which are unresolvable.
+
+  ADDED:     03a7beb55b9fad363f0dd33e72ccf2d3e1c2a406
+  REVERTED:  a80a6b85b428e6ce12a8363bb1f08d44c50f3252
+
+
+EPOLL_CTL_POKE / EPOLL_CTL_TRIGGER
+----------------------------------
+
+  Eric Wong
+
+  * Didn't like the per-item Mutex.
+  * Rather than having another thread delete_item on successful EPOLL_CTL_DISABLE,
+    Eric would normally use shutdown() which causes epoll_wait() to return the item and
+    normal error handling would kick in during any subsequent read/write.
+  * BUT shutdown() is limited to sockets, and is irreversible, so he comes up with
+    EPOLL_CTL_POKE - Force an item into the ready list
+      The other threads calling epoll_wait() then have to handle it.
+    * Doesn't require per-item mutex userspace stuff
+    * Doesn't require ONESHOT (but limited usefulness in this area)
+
+  Christof Meerwald
+
+  * Had this same suggestion
+      https://lkml.org/lkml/2012/6/19/358
+      Called it EPOLL_CTL_TRIGGER
+
+      Paton Lewis had issues with this though.
+
+2015 LWN Article
+----------------
+  https://lwn.net/Articles/633422/
+  "Epoll evolving"
+
+
+2015 LWN article
+----------------
+
+  https://lwn.net/Articles/637435/
+  "Issues with epoll()"
+
+    Jason Baron (Akamai), observes performance problems
+    https://lwn.net/Articles/633422/
+
+      Facebook, Google, and GlusterFS are all hitting these issues.
+
+      "thundering herd" problem on wakeups
+ 	Multiple threads on same epoll - event wakes up ALL threads, not just one.
+	EPOLLONESHOT will disable it after the 1st thread takes it, but the other
+        threads still woke up unnecessarily.
+
+	   EPOLLEXCLUSIVE flag - requests only one process be woken.
+           EPOLLROUNDROBIN flag - wake up processes in round robin, not always the same one
+
+      "global locks" when manipulating epoll sets
+	   Kernel does this global lock, because it doesn't know when sets have FDs in common.
+
+    Fam Zheng - also posted patches
+      https://lwn.net/Articles/633195/
+	epoll_ctl_batch()
+	epoll_pwait1() - params include nanosecond-precise timeout
+
+    Gluster
+      http://review.gluster.com/#/c/3842/
+
+ADD PERSISTANT DATA TO EPOLL EVENT
+----------------------------------
+  struct epoll_event event;
+  event.data.ptr = malloc(sizeof(Data)) ...
+
+See SO_REUSEPORT
+----------------
+  Solves problem with accept(2) and EPOLLONESHOT.
+  https://lwn.net/Articles/542629/
+
+...
+
+The only place eventpoll.c uses EPOLLET is when it is NOT ONESHOT and NOT ET then it
+inserts the event back on the tail.
+
+
+* Apparently file read/writes are ALWAYS READY... which is bullshit.
+  Something is broken about epoll there.
+* Works very well with recvmmsg (UDP)
+* http://stackoverflow.com/questions/4093185/whats-the-difference-between-epoll-poll-threadpool
+
+
+
+Rule for closing/deallocating:
+------------------------------
+* Only do it in event-processing code (under ONESHOT), so nobody else will be
+  handling it.

@@ -1,0 +1,65 @@
+is_file_epoll
+ep_set_ffd
+ep_cmp_ffd
+ep_is_linked
+ep_pwq_from_wait
+ep_item_from_wait
+ep_item_from_epqueue
+ep_op_has_event
+ep_nested_calls_init
+ep_events_available
+ep_call_nested
+ep_wake_up_nested
+ep_poll_wakeup_proc
+ep_poll_safewake
+ep_remove_wait_queue
+ep_unregister_pollwait
+ep_wakeup_source
+ep_pm_stay_awake
+ep_has_wakeup_source
+ep_pm_stay_awake_rcu
+ep_scan_ready_list
+epi_rcu_free
+ep_remove
+ep_free
+ep_eventpoll_release
+ep_item_poll
+ep_read_events_proc
+ep_ptable_queue_proc
+ep_poll_readyevents_proc
+ep_eventpoll_poll
+ep_show_fdinfo
+eventpoll_release_file
+ep_alloc
+ep_find
+ep_poll_callback
+ep_ptable_queue_proc
+ep_rbtree_insert
+path_count_inc
+path_count_init
+reverse_path_check_proc
+reverse_path_check
+ep_create_wakeup_source
+ep_destroy_wakeup_source
+ep_insert
+ep_modify
+ep_send_events_proc
+ep_send_events
+ep_set_mstimeout
+ep_poll
+ep_loop_check_proc
+ep_loop_check
+clear_tfile_check_list
+
+SYSCALL_DEFINE1(epoll_create1...)
+SYSCALL_DEFINE1(epoll_create...)
+SYSCALL_DEFINE4(epoll_ctl...)
+SYSCALL_DEFINE4(epoll_wait...)
+  ep_poll()
+SYSCALL_DEFINE6(epoll_pwait...)
+  ep_poll()
+__init
+
+  ep_poll_callback() does the waking
+    ep_poll_safewake()
+      ep_call_nested()  ep_poll_wakeup_proc()  ep_poll_wakeup_nested()  wake_up_poll()

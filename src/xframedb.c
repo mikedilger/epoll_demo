@@ -4,6 +4,17 @@
  *
  * This is a generic linux network server, destined to be a graph database
  * server xframedb
+ *
+ * FIXME:  USE EPOLLONESHOT in epoll_ctl(), and re-arm with EPOLL_CTL_MOD after
+ *         the event is handled (this avoids a 2nd thread handling the 2nd event
+ *         before the 1st event is handled-- serializes events per fd -- which is
+ *         typically expected).
+ *
+ * ALSO READ (AND FIX AS NEEDED):
+ *    https://lwn.net/Articles/520012/
+ *      EPOLL_CTL_DISABLE (since linux 3.7)
+ *      also has a solution to starvation (search article for 'starvation')
+ *    https://lwn.net/Articles/520019/
  */
 
 #include <stdio.h>
