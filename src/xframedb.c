@@ -1,7 +1,6 @@
 /**
- * THIS SOFTWARE AND DATA ARE COPYRIGHTED
  * Copyright © Optimal Computing Limited New Zealand, 2012.
- * Please see the file LICENSE for terms and conditions and restrictions.
+ * Licensed under the MIT licence, see LICENSE file for details
  *
  * This is a generic linux network server, destined to be a graph database
  * server xframedb
